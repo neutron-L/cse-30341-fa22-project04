@@ -30,7 +30,15 @@ bool    disk_sanity_check(Disk *disk, size_t blocknum, const char *data);
  *              on failure).
  **/
 Disk *	disk_open(const char *path, size_t blocks) {
-    return NULL;
+    Disk * disk = (Disk *)malloc(sizeof(Disk));
+    if (disk)
+    {
+        disk->fd = open(path, O_RDWR);
+        disk->blocks = blocks;
+        disk->reads = disk->writes = 0;
+    }
+
+    return disk;
 }
 
 /**
@@ -45,6 +53,14 @@ Disk *	disk_open(const char *path, size_t blocks) {
  * @param       disk        Pointer to Disk structure.
  */
 void	disk_close(Disk *disk) {
+    if (disk)
+    {
+        printf("number of disk reads: %d\n", disk->reads);
+        printf("number of disk writes: %d\n", disk->writes);
+
+        close(disk->fd);
+        free(disk);
+    }
 }
 
 /**
@@ -65,7 +81,14 @@ void	disk_close(Disk *disk) {
  *              (BLOCK_SIZE on success, DISK_FAILURE on failure).
  **/
 ssize_t disk_read(Disk *disk, size_t block, char *data) {
-    return DISK_FAILURE;
+    if (disk_sanity_check(disk, block, data))
+    {
+        lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET);
+        assert(read(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
+        return BLOCK_SIZE;
+    }
+    else
+        return DISK_FAILURE;
 }
 
 /**
@@ -86,7 +109,14 @@ ssize_t disk_read(Disk *disk, size_t block, char *data) {
  *              (BLOCK_SIZE on success, DISK_FAILURE on failure).
  **/
 ssize_t disk_write(Disk *disk, size_t block, char *data) {
-    return DISK_FAILURE;
+    if (disk_sanity_check(disk, block, data))
+    {
+        lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET);
+        assert(write(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
+        return BLOCK_SIZE;
+    }
+    else
+        return DISK_FAILURE;
 }
 
 /* Internal Functions */
@@ -108,7 +138,7 @@ ssize_t disk_write(Disk *disk, size_t block, char *data) {
  *              (true for safe, false for unsafe).
  **/
 bool    disk_sanity_check(Disk *disk, size_t block, const char *data) {
-    return false;
+    return disk && disk->fd >= 0 && block < disk->blocks && data;
 }
 
 /* vim: set expandtab sts=4 sw=4 ts=8 ft=c: */
