@@ -6,3 +6,4 @@ lib/lib*.a
 test.log
 *.o
 *.swp
+.vscode/

@@ -3,6 +3,7 @@
 #include "sfs/disk.h"
 #include "sfs/logging.h"
 
+#include <assert.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -31,9 +32,22 @@ bool    disk_sanity_check(Disk *disk, size_t blocknum, const char *data);
  **/
 Disk *	disk_open(const char *path, size_t blocks) {
     Disk * disk = (Disk *)malloc(sizeof(Disk));
+
     if (disk)
     {
-        disk->fd = open(path, O_RDWR);
+        if ((disk->fd = open(path, O_RDWR)) == -1)
+        {
+            free(disk);
+            return NULL;
+        }
+
+        if (lseek(disk->fd, 0, SEEK_END) < blocks * BLOCK_SIZE)
+        {
+            close(disk->fd);
+            free(disk);
+            return NULL;
+        }
+
         disk->blocks = blocks;
         disk->reads = disk->writes = 0;
     }
