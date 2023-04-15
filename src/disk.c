@@ -37,6 +37,8 @@ Disk *	disk_open(const char *path, size_t blocks) {
     {
         if ((disk->fd = open(path, O_RDWR)) == -1)
         {
+            printf("%s\n", path);
+            perror("open");
             free(disk);
             return NULL;
         }
@@ -97,7 +99,8 @@ void	disk_close(Disk *disk) {
 ssize_t disk_read(Disk *disk, size_t block, char *data) {
     if (disk_sanity_check(disk, block, data))
     {
-        lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET);
+        ++disk->reads;
+        assert(lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET) == block * BLOCK_SIZE);
         assert(read(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
         return BLOCK_SIZE;
     }
@@ -125,6 +128,7 @@ ssize_t disk_read(Disk *disk, size_t block, char *data) {
 ssize_t disk_write(Disk *disk, size_t block, char *data) {
     if (disk_sanity_check(disk, block, data))
     {
+        ++disk->writes;
         lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET);
         assert(write(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
         return BLOCK_SIZE;
