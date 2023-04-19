@@ -61,14 +61,20 @@ void    fs_debug(Disk *disk) {
             // print valid inode的信息
             if (pi->valid)
             {
-                printf("Inode: %d\n", i * INODES_PER_BLOCK + j);
+                printf("Inode %d:\n", i * INODES_PER_BLOCK + j);
                 printf("    size: %d bytes\n", pi->size);
-                for (size_t k = 0; k < POINTERS_PER_INODE && pi->direct[k]; ++k)
-                    printf("    direct blocks: %d\n", pi->direct[k]);
+                if (pi->direct[0])
+                {
+                    printf("    direct blocks:");
+                    for (size_t k = 0; k < POINTERS_PER_INODE && pi->direct[k]; ++k)
+                        printf(" %d", pi->direct[k]);
+                    printf("\n");
+                }
+                
                 // 存在indirect inode
                 if (pi->indirect)
                 {
-                    printf("    indirect blocks: ");
+                    printf("    indirect block: %d\n", pi->indirect);
                     Block indirect_block;
 
                     if (disk_read(disk, pi->indirect, indirect_block.data) == DISK_FAILURE)
@@ -76,8 +82,9 @@ void    fs_debug(Disk *disk) {
                         fprintf(stderr, "Fail to read indirect block %d\n", pi->indirect);
                         return;
                     }
+                    printf("    indirect data blocks:");
                     for (size_t k = 0; k < POINTERS_PER_BLOCK && indirect_block.pointers[k]; ++k)
-                        printf("%d ", indirect_block.pointers[k]);
+                        printf(" %d", indirect_block.pointers[k]);
                     printf("\n");
                 }
                 --nums;
@@ -105,9 +112,9 @@ void    fs_debug(Disk *disk) {
  * @return      Whether or not all disk operations were successful.
  **/
 bool    fs_format(FileSystem *fs, Disk *disk) {
-    (void)fs;
-
-    size_t inodes_size = (disk->blocks + 9) / 10;
+    if (fs->disk == NULL && disk)
+    {
+        size_t inodes_size = (disk->blocks + 9) / 10;
 
     // clear inode blocks
     char * data = (char *)calloc(BLOCK_SIZE, sizeof(char));
@@ -123,14 +130,16 @@ bool    fs_format(FileSystem *fs, Disk *disk) {
     ptr[0] = MAGIC_NUMBER;
     ptr[1] = disk->blocks;
     ptr[2] = inodes_size;
-    ptr[3] = disk->blocks - 1 - inodes_size;
+    ptr[3] = inodes_size * INODES_PER_BLOCK;
     if (disk_write(disk, 0, data) == DISK_FAILURE)
     {
         error("Fail to init super block\n");
         return false;
     }
-
     return true;
+    }
+
+    return false;
 }
 
 /**
@@ -151,7 +160,7 @@ bool    fs_format(FileSystem *fs, Disk *disk) {
  * @return      Whether or not the mount operation was successful.
  **/
 bool    fs_mount(FileSystem *fs, Disk *disk) {
-    if (disk)
+    if (disk && fs->disk == NULL)
     {
         fs->disk = disk;
         // read super block
@@ -552,7 +561,7 @@ static void    fs_initialize_free_block_bitmap(FileSystem *fs)
             Inode *pi = &block.inodes[j];
             if (pi->valid)
             {
-                for (size_t k = 0; k < INODES_PER_BLOCK && pi->direct[k]; ++k)
+                for (size_t k = 0; k < POINTERS_PER_INODE && pi->direct[k]; ++k)
                     fs->free_blocks[pi->direct[k]] = false;
                 if (pi->indirect)
                 {

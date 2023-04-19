@@ -37,8 +37,8 @@ Disk *	disk_open(const char *path, size_t blocks) {
     {
         if ((disk->fd = open(path, O_RDWR)) == -1)
         {
-            printf("%s\n", path);
-            perror("open");
+            // printf("%s\n", path);
+            // perror("open");
             free(disk);
             return NULL;
         }
@@ -71,8 +71,8 @@ Disk *	disk_open(const char *path, size_t blocks) {
 void	disk_close(Disk *disk) {
     if (disk)
     {
-        printf("number of disk reads: %d\n", disk->reads);
-        printf("number of disk writes: %d\n", disk->writes);
+        // printf("number of disk reads: %d\n", disk->reads);
+        // printf("number of disk writes: %d\n", disk->writes);
 
         close(disk->fd);
         free(disk);
