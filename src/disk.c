@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 
 /* Internal Prototyes */
 
@@ -37,17 +38,19 @@ Disk *	disk_open(const char *path, size_t blocks) {
     {
         if ((disk->fd = open(path, O_RDWR)) == -1)
         {
-            // printf("%s\n", path);
-            // perror("open");
+            debug("Fail to open file %s\n", path);
+            perror("Open file failed: ");
             free(disk);
             return NULL;
         }
-
-        if (lseek(disk->fd, 0, SEEK_END) < blocks * BLOCK_SIZE)
+        // truncate file
+        if (ftruncate(disk->fd, blocks * BLOCK_SIZE) == -1)
         {
+            debug("Fail to truncate file %s\n", path);
+            perror("Fail to truncate file: ");
             close(disk->fd);
             free(disk);
-            return NULL;
+            return false;
         }
 
         disk->blocks = blocks;
@@ -101,7 +104,12 @@ ssize_t disk_read(Disk *disk, size_t block, char *data) {
     {
         ++disk->reads;
         assert(lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET) == block * BLOCK_SIZE);
-        assert(read(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
+        ssize_t x;
+        if ((x = read(disk->fd, data, BLOCK_SIZE)) != BLOCK_SIZE)
+        {
+            debug("It should return BLOCK_SIZE but return %d\n", x);
+            perror("Fail to read block: ");
+        }
         return BLOCK_SIZE;
     }
     else
@@ -129,8 +137,19 @@ ssize_t disk_write(Disk *disk, size_t block, char *data) {
     if (disk_sanity_check(disk, block, data))
     {
         ++disk->writes;
-        lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET);
-        assert(write(disk->fd, data, BLOCK_SIZE) == BLOCK_SIZE); 
+        off_t x;
+        if ((x = lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET)) != block * BLOCK_SIZE)
+        {
+            debug("lseek should return %d but it return %d\n", block * BLOCK_SIZE, x);
+            perror("Fail to seek: ");
+            exit(1);
+        }
+        if ((x = write(disk->fd, data, BLOCK_SIZE)) != BLOCK_SIZE)
+        {
+            debug("write should return %d but it return %d\n",  BLOCK_SIZE, x);
+            perror("Fail to write: ");
+            exit(1);
+        }
         return BLOCK_SIZE;
     }
     else

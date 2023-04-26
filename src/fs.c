@@ -115,28 +115,41 @@ bool    fs_format(FileSystem *fs, Disk *disk) {
     if (fs->disk == NULL && disk)
     {
         size_t inodes_size = (disk->blocks + 9) / 10;
-
-    // clear inode blocks
-    char * data = (char *)calloc(BLOCK_SIZE, sizeof(char));
-    for (size_t i = 0; i < inodes_size; ++i)
-        if (disk_write(disk, i + 1, data) == DISK_FAILURE)
+        
+        // check whether the disk has been formatted
+        Block block;
+        
+        if (disk_read(disk, 0, block.data) == DISK_FAILURE)
         {
-            error("Fail to clear inode block %d\n", i + 1);
+            debug("Fail to read super block\n");
             return false;
         }
 
-    // Write SuperBlock
-    uint32_t * ptr = (uint32_t *)data;
-    ptr[0] = MAGIC_NUMBER;
-    ptr[1] = disk->blocks;
-    ptr[2] = inodes_size;
-    ptr[3] = inodes_size * INODES_PER_BLOCK;
-    if (disk_write(disk, 0, data) == DISK_FAILURE)
-    {
-        error("Fail to init super block\n");
-        return false;
-    }
-    return true;
+        // do nothing
+        // if (block.super.magic_number == MAGIC_NUMBER)
+        //     return true;
+
+        // clear inode blocks
+        char * data = (char *)calloc(BLOCK_SIZE, sizeof(char));
+        for (size_t i = 0; i < inodes_size; ++i)
+            if (disk_write(disk, i + 1, data) == DISK_FAILURE)
+            {
+                debug("Fail to clear inode block %d\n", i + 1);
+                return false;
+            }
+
+        // Write SuperBlock
+        uint32_t * ptr = (uint32_t *)data;
+        ptr[0] = MAGIC_NUMBER;
+        ptr[1] = disk->blocks;
+        ptr[2] = inodes_size;
+        ptr[3] = inodes_size * INODES_PER_BLOCK;
+        if (disk_write(disk, 0, data) == DISK_FAILURE)
+        {
+            error("Fail to init super block\n");
+            return false;
+        }
+        return true;
     }
 
     return false;
@@ -164,18 +177,30 @@ bool    fs_mount(FileSystem *fs, Disk *disk) {
     {
         fs->disk = disk;
         // read super block
-        if (disk_read(disk, 0, &fs->meta_data) == DISK_FAILURE)
+        Block block;
+        if (disk_read(disk, 0, block.data) == DISK_FAILURE)
         {
-            error("Fail to read super block\n");
+            debug("Fail to read super block\n");
             return false;
         }
 
+        memcpy(&fs->meta_data, &block.super, sizeof(SuperBlock));
         // check magic number
         if (fs->meta_data.magic_number != MAGIC_NUMBER)
         {
-            error("Magic number is invalid\n");
+            debug("Magic number 0x%x is invalid\n", fs->meta_data.magic_number);
             return false;
         }
+        else if (fs->meta_data.inode_blocks * INODES_PER_BLOCK != fs->meta_data.inodes)
+        {
+            debug("Inodes and inode_blocks Error\n");
+            return false;
+        }
+        else if (fs->meta_data.inode_blocks != (fs->meta_data.blocks + 9) / 10)
+        {
+            debug("blocks and inode_blocks Error\n");
+            return false;
+        } 
 
         // initialize free bitmap
         fs_initialize_free_block_bitmap(fs);
@@ -496,7 +521,7 @@ static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node)
 
     if (!disk_read(fs, inode_block_number, block.inodes))
     {
-
+        return false;
     }
 
     inode_number %= INODES_PER_BLOCK;
@@ -537,7 +562,7 @@ static void    fs_initialize_free_block_bitmap(FileSystem *fs)
 
     size_t i;
     // super block and inode blocks are not free
-    for (size_t i = 0; i < 1 + fs->meta_data.inode_blocks; ++i)
+    for (i = 0; i <= fs->meta_data.inode_blocks; ++i)
         fs->free_blocks[i] = false;
     // remain blocks are free
     while (i < fs->meta_data.blocks)
@@ -551,8 +576,8 @@ static void    fs_initialize_free_block_bitmap(FileSystem *fs)
         // 读入inode 块
         if (disk_read(fs->disk, i + 1, block.data) == DISK_FAILURE)
         {
-            error("Fail to read inode block\n");
-            return -1;
+            debug("Fail to read inode block\n");
+            exit(1);
         }
         
         // 访问每一个inode
@@ -565,14 +590,14 @@ static void    fs_initialize_free_block_bitmap(FileSystem *fs)
                     fs->free_blocks[pi->direct[k]] = false;
                 if (pi->indirect)
                 {
-                    fs->free_blocks[pi->direct[pi->indirect]] = false;
+                    fs->free_blocks[pi->indirect] = false;
 
                     Block indirect_block;
-                    // 读入inode 块
-                    if (disk_read(fs->disk, i + 1, indirect_block.pointers) == DISK_FAILURE)
+                    // 读入indirect block
+                    if (disk_read(fs->disk, pi->indirect, indirect_block.pointers) == DISK_FAILURE)
                     {
-                        error("Fail to read inode block\n");
-                        return -1;
+                        debug("Fail to read indirect block of inode %d\n", i);
+                        exit(1);
                     }
                     for (size_t k = 0; k < POINTERS_PER_BLOCK && indirect_block.pointers[k]; ++k)
                         fs->free_blocks[indirect_block.pointers[k]] = false;
@@ -588,8 +613,13 @@ static ssize_t fs_allocate_free_block(FileSystem *fs)
     size_t i = 1 + fs->meta_data.inode_blocks;
     while (i < fs->disk->blocks && !fs->free_blocks[i])
         ++i;
-    fs->free_blocks[i] = false;
-    return i;
+    if (i < fs->disk->blocks)
+    {
+        fs->free_blocks[i] = false;
+        return i;
+    }
+    else
+        return -1;
 }
 
 
