@@ -11,13 +11,13 @@
 
 /* Constants */
 
-#define DISK_PATH   "unit_disk.image"
+#define DISK_PATH   "/home/rda/cse-30341/cse-30341-fa22-project04/bin/unit_disk.image"
 #define DISK_BLOCKS (4)
 
 /* Functions */
 
 void test_cleanup() {
-    unlink(DISK_PATH);
+    // unlink(DISK_PATH);
 }
 
 int test_00_disk_open() {
