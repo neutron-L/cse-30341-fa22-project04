@@ -340,7 +340,7 @@ bool    fs_remove(FileSystem *fs, size_t inode_number) {
  **/
 ssize_t fs_stat(FileSystem *fs, size_t inode_number) {
     Inode inode;
-    return fs_load_inode(fs, inode_number, &inode) ? inode.size : -1; 
+    return fs_load_inode(fs, inode_number, &inode) ? inode.size : (-1l); 
 }
 
 /**
