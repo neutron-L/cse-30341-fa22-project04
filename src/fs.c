@@ -520,7 +520,7 @@ static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node)
     size_t inode_block_number = 1 + inode_number / INODES_PER_BLOCK;
     Block block;
 
-    if (!disk_read(fs, inode_block_number, block.inodes))
+    if (!disk_read(fs->disk, inode_block_number, block.inodes))
     {
         debug("Fail to read inode %d\n", inode_number);
         return false;
