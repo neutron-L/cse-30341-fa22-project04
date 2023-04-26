@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 /* Internal Functions */
 static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node);
@@ -63,13 +64,13 @@ void    fs_debug(Disk *disk) {
             {
                 printf("Inode %d:\n", i * INODES_PER_BLOCK + j);
                 printf("    size: %d bytes\n", pi->size);
+                printf("    direct blocks:");
                 if (pi->direct[0])
                 {
-                    printf("    direct blocks:");
                     for (size_t k = 0; k < POINTERS_PER_INODE && pi->direct[k]; ++k)
                         printf(" %d", pi->direct[k]);
-                    printf("\n");
                 }
+                printf("\n");
                 
                 // 存在indirect inode
                 if (pi->indirect)
@@ -250,7 +251,7 @@ ssize_t fs_create(FileSystem *fs) {
         // 读入inode 块
         if (disk_read(fs->disk, i + 1, block.data) == DISK_FAILURE)
         {
-            error("Fail to read inode block\n");
+            debug("Fail to read inode block %d\n", i);
             return -1;
         }
         
@@ -521,6 +522,7 @@ static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node)
 
     if (!disk_read(fs, inode_block_number, block.inodes))
     {
+        debug("Fail to read inode %d\n", inode_number);
         return false;
     }
 
@@ -528,7 +530,7 @@ static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node)
 
     memcpy(node, &block.inodes[inode_number], sizeof(Inode));
 
-    return true;
+    return node->valid;
 }
 
 
@@ -625,5 +627,6 @@ static ssize_t fs_allocate_free_block(FileSystem *fs)
 
 static void fs_release_free_block(FileSystem *fs, size_t block_number)
 {
+    assert(!fs->free_blocks[block_number]);
     fs->free_blocks[block_number] = true;
 }
