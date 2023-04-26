@@ -312,7 +312,7 @@ bool    fs_remove(FileSystem *fs, size_t inode_number) {
     {
         // read indirect block
         Block block;
-        disk_read(fs, inode.indirect, block.pointers);
+        disk_read(fs->disk, inode.indirect, block.pointers);
 
         for (i = 0; i < POINTERS_PER_BLOCK && block.pointers[i]; ++i)
             fs_release_free_block(fs, block.pointers[i]);
@@ -365,6 +365,9 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
 
     if (fs_load_inode(fs, inode_number, &inode))
     {
+        // set length
+        length = min(length, inode.size - offset);
+
         // 暂存数据块
         Block block;
         size_t bytes_read = 0;
@@ -372,9 +375,11 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
         // 读取direct block
         size_t i = offset / BLOCK_SIZE;
         offset %= BLOCK_SIZE;
+
+        // 开始的块是否是直接块
         while (i < POINTERS_PER_INODE && inode.direct[i] && bytes_read < length)
         {
-            if (!disk_read(fs, inode.direct[i], block.data))
+            if (!disk_read(fs->disk, inode.direct[i], block.data))
             {
                 error("Fail to read block %d\n", inode.direct[i]);
                 return -1;
@@ -394,15 +399,16 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
             // 读取indirect block
             Block indirect_block;
 
-            if (!disk_read(fs, inode.indirect, block.data))
+            if (!disk_read(fs->disk, inode.indirect, indirect_block.data))
             {
                 error("Fail to read block %d\n", inode.indirect);
                 return -1;
             }
 
-            for (size_t i = 0; i < POINTERS_PER_BLOCK && indirect_block.pointers[i] && bytes_read < length; ++i)
+            i -= POINTERS_PER_INODE;
+            while (i < POINTERS_PER_BLOCK && indirect_block.pointers[i] && bytes_read < length)
             {
-                if (!disk_read(fs, indirect_block.pointers[i], block.data))
+                if (!disk_read(fs->disk, indirect_block.pointers[i], block.data))
                 {
                     error("Fail to read block %d\n", indirect_block.pointers[i]);
                     return -1;
@@ -412,9 +418,11 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
                 size_t sz = min(BLOCK_SIZE, length - bytes_read);
                 memcpy(data + bytes_read, block.data + offset % BLOCK_SIZE, sz);
                 bytes_read += sz;
+                ++i;
+                offset = 0;
             }
         }
-
+        assert(bytes_read == length);
         return bytes_read;
     }
 
@@ -452,7 +460,7 @@ ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length,
         offset %= BLOCK_SIZE;
         while (i < POINTERS_PER_INODE && inode.direct[i] && bytes_write < length)
         {
-            if (!disk_read(fs, inode.direct[i], block.data))
+            if (!disk_read(fs->disk, inode.direct[i], block.data))
             {
                 error("Fail to read block %d\n", inode.direct[i]);
                 return -1;
@@ -478,7 +486,7 @@ ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length,
             // 读取indirect block
             Block indirect_block;
 
-            if (!disk_read(fs, inode.indirect, block.data))
+            if (!disk_read(fs->disk, inode.indirect, block.data))
             {
                 error("Fail to read block %d\n", inode.indirect);
                 return -1;
@@ -486,7 +494,7 @@ ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length,
 
             for (size_t i = 0; i < POINTERS_PER_BLOCK && indirect_block.pointers[i] && bytes_write < length; ++i)
             {
-                if (!disk_read(fs, indirect_block.pointers[i], block.data))
+                if (!disk_read(fs->disk, indirect_block.pointers[i], block.data))
                 {
                     error("Fail to read block %d\n", indirect_block.pointers[i]);
                     return -1;
@@ -540,18 +548,20 @@ static bool    fs_save_inode(FileSystem *fs, size_t inode_number, Inode *node)
     size_t inode_block_number = 1 + inode_number / INODES_PER_BLOCK;
     Block block;
 
-    if (!disk_read(fs, inode_block_number, block.inodes))
+    if (!disk_read(fs->disk, inode_block_number, block.inodes))
     {
-
+        debug("Fail to read inode %d\n", inode_number);
+        return false;
     }
 
     inode_number %= INODES_PER_BLOCK;
 
     memcpy(&block.inodes[inode_number], node, sizeof(Inode));
 
-    if (!disk_write(fs, inode_block_number, block.data))
+    if (!disk_write(fs->disk, inode_block_number, block.data))
     {
-
+        debug("Fail to write inode %d back\n", inode_number);
+        return false;
     }
     
     return true;

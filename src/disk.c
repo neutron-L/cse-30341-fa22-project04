@@ -103,8 +103,13 @@ ssize_t disk_read(Disk *disk, size_t block, char *data) {
     if (disk_sanity_check(disk, block, data))
     {
         ++disk->reads;
-        assert(lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET) == block * BLOCK_SIZE);
         ssize_t x;
+
+        if ((x = lseek(disk->fd, block * BLOCK_SIZE, SEEK_SET)) != block * BLOCK_SIZE)
+        {
+            debug("It should return %d but return %d\n", block * BLOCK_SIZE, x);
+            perror("Fail to read block: ");
+        }
         if ((x = read(disk->fd, data, BLOCK_SIZE)) != BLOCK_SIZE)
         {
             debug("It should return BLOCK_SIZE but return %d\n", x);
