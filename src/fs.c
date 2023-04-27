@@ -148,8 +148,10 @@ bool    fs_format(FileSystem *fs, Disk *disk) {
         if (disk_write(disk, 0, data) == DISK_FAILURE)
         {
             error("Fail to init super block\n");
-            return false;
+            free(data);
+            exit(1);
         }
+        free(data);
         return true;
     }
 
