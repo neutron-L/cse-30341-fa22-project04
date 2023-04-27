@@ -14,7 +14,7 @@ static bool    fs_save_inode(FileSystem *fs, size_t inode_number, Inode *node);
 static void    fs_initialize_free_block_bitmap(FileSystem *fs);
 static ssize_t fs_allocate_free_block(FileSystem *fs);
 static void fs_release_free_block(FileSystem *fs, size_t block_number);
-
+static void fs_expand_file(FileSystem * fs, Inode * node, size_t new_size);
 
 /* External Functions */
 
@@ -298,7 +298,7 @@ bool    fs_remove(FileSystem *fs, size_t inode_number) {
 
     if (!fs_load_inode(fs, inode_number, &inode) || !inode.valid)
     {
-        error("Fail to load inode %d or %d inode is invalid\n", inode_number);
+        error("Fail to load inode %u or %u inode is invalid\n", inode_number, inode_number);
         return false;
     }
 
@@ -416,7 +416,7 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
 
                 // 拷贝数据
                 size_t sz = min(BLOCK_SIZE, length - bytes_read);
-                memcpy(data + bytes_read, block.data + offset % BLOCK_SIZE, sz);
+                memcpy(data + bytes_read, block.data + offset, sz);
                 bytes_read += sz;
                 ++i;
                 offset = 0;
@@ -437,20 +437,23 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
  *
  *  2. Continuously copy data from buffer to blocks.
  *
- *  Note: Data is read from direct blocks first, and then from indirect blocks.
+ *  Note: Data is write to direct blocks first, and then to indirect blocks.
  *
  * @param       fs              Pointer to FileSystem structure.
  * @param       inode_number    Inode to write data to.
  * @param       data            Buffer with data to copy
  * @param       length          Number of bytes to write.
  * @param       offset          Byte offset from which to begin writing.
- * @return      Number of bytes read (-1 on error).
+ * @return      Number of bytes write (-1 on error).
  **/
 ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset) {
     Inode inode;
 
     if (fs_load_inode(fs, inode_number, &inode))
     {
+        // 扩容文件
+        fs_expand_file(fs, &inode, offset + length);
+
         // 数据块
         Block block;
         size_t bytes_write = 0;
@@ -467,11 +470,11 @@ ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length,
             }
             // 拷贝数据
             size_t sz = min(BLOCK_SIZE - offset, length - bytes_write);
-            memcpy(block.data + offset % BLOCK_SIZE, data + bytes_write, sz);
+            memcpy(block.data + offset, data + bytes_write, sz);
             bytes_write += sz;
 
              // write back
-            if (!disk_write(fs, i, block.data))
+            if (!disk_write(fs->disk, inode.direct[i], block.data))
             {
 
             }
@@ -486,32 +489,40 @@ ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length,
             // 读取indirect block
             Block indirect_block;
 
-            if (!disk_read(fs->disk, inode.indirect, block.data))
+            if (!disk_read(fs->disk, inode.indirect, indirect_block.data))
             {
                 error("Fail to read block %d\n", inode.indirect);
-                return -1;
+                exit(1);
             }
 
-            for (size_t i = 0; i < POINTERS_PER_BLOCK && indirect_block.pointers[i] && bytes_write < length; ++i)
+            i -= POINTERS_PER_INODE; // 回退direct blocks个block
+            while (i < POINTERS_PER_BLOCK && indirect_block.pointers[i] && bytes_write < length)
             {
                 if (!disk_read(fs->disk, indirect_block.pointers[i], block.data))
                 {
                     error("Fail to read block %d\n", indirect_block.pointers[i]);
-                    return -1;
+                    exit(1);
                 }   
 
                 // 拷贝数据
-                size_t sz = min(BLOCK_SIZE, length - bytes_write);
+                size_t sz = min(BLOCK_SIZE - offset, length - bytes_write);
                 memcpy(block.data + offset, data + bytes_write, sz);
                 bytes_write += sz;
 
                  // write back
-                if (!disk_write(fs, i, block.data))
+                if (!disk_write(fs->disk, indirect_block.pointers[i], block.data))
                 {
-
+                    error("Fail to write back block %d\n", indirect_block.pointers[i]);
+                    exit(1);
                 }
+
+                offset = 0;
+                ++i;
             }
         }
+
+        // write back inode
+        fs_save_inode(fs, inode_number, &inode);
 
         return bytes_write;
     }
@@ -544,7 +555,7 @@ static bool    fs_load_inode(FileSystem *fs, size_t inode_number, Inode *node)
 
 static bool    fs_save_inode(FileSystem *fs, size_t inode_number, Inode *node)
 {
-// inode block number
+    // inode block number
     size_t inode_block_number = 1 + inode_number / INODES_PER_BLOCK;
     Block block;
 
@@ -639,4 +650,78 @@ static void fs_release_free_block(FileSystem *fs, size_t block_number)
 {
     assert(!fs->free_blocks[block_number]);
     fs->free_blocks[block_number] = true;
+}
+
+static void fs_expand_file(FileSystem * fs, Inode * node, size_t new_size)
+{
+    size_t old_blocks = UPPER_ROUND(node->size, BLOCK_SIZE);
+    size_t new_blocks = UPPER_ROUND(new_size, BLOCK_SIZE);
+
+    if (old_blocks < new_blocks)
+    {
+        size_t dif = new_blocks - old_blocks;
+        ssize_t free_block_idx;
+
+        // inode中的最后一个data block index的下一个位置
+        size_t idx = UPPER_ROUND(node->size, BLOCK_SIZE);
+        
+        while (idx < POINTERS_PER_INODE && dif && (free_block_idx = fs_allocate_free_block(fs)) != -1)
+        {
+            node->direct[idx++] = free_block_idx;
+            --dif;
+        }
+
+        if (idx >= POINTERS_PER_INODE)
+        {
+            idx -= POINTERS_PER_INODE;
+            // read indirect block
+            Block indirect_block;
+
+            // 如果没有indirect block则分配
+            bool pre_indirect = node->indirect;
+            if (!node->indirect)
+            {
+                if (((free_block_idx = fs_allocate_free_block(fs)) != -1))
+                    node->indirect = free_block_idx;
+            }
+
+            if (node->indirect)
+            {
+                // clear indirect block
+                if (!disk_read(fs->disk, node->indirect, indirect_block.data))
+                {
+                    error("Fail to read indirect block %d\n", node->indirect);
+                    exit(1);
+                }
+
+                if (!pre_indirect) // 新的间接块，需要先clear
+                    memset(indirect_block.pointers, 0, sizeof(indirect_block));
+
+                while (idx < POINTERS_PER_BLOCK && dif && (free_block_idx = fs_allocate_free_block(fs)) != -1)
+                {
+                    indirect_block.pointers[idx++] = free_block_idx;
+                    --dif;
+                }
+
+                if (!idx && !pre_indirect) // 分配完indirect block后没有空闲块了，需要返回这个空的indirect block
+                {
+                    fs_release_free_block(fs, node->indirect);
+                    node->indirect = 0;
+                }
+                else
+                {
+                    // write back indirect block
+                    if (!disk_write(fs->disk, node->indirect, indirect_block.data))
+                    {
+                        error("Fail to write back indirect block %d\n", node->indirect);
+                        exit(1);
+                    }
+                }
+            }
+        }
+        
+        node->size = dif ? (new_blocks - dif) * BLOCK_SIZE : new_size;
+    }
+    else
+        node->size = max(node->size, new_size);
 }
